@@ -113,15 +113,24 @@ def _build_client(allow_interactive_mfa: bool) -> Any:
 
     email = os.environ.get("GARMIN_EMAIL")
     password = os.environ.get("GARMIN_PASSWORD")
-    if not email or not password:
+    # The password is optional: once ~/.garminconnect holds valid tokens,
+    # garminconnect logs in from them alone. It is only needed for a fresh
+    # SSO login, which the interactive `login` subcommand can prompt for.
+    if allow_interactive_mfa and (not email or not password) and not _token_cache_present():
+        import getpass
+        if not email:
+            email = input("Garmin email: ").strip()
+        if not password:
+            password = getpass.getpass("Garmin password: ")
+    if not password and not _token_cache_present():
         raise RuntimeError(
-            "GARMIN_EMAIL and GARMIN_PASSWORD are not set. "
-            "Define them in the .env file or as environment variables "
-            "(under the 'env' key in claude_desktop_config.json)."
+            "No cached Garmin tokens and no GARMIN_PASSWORD set. "
+            "Run 'install.bat -Reconfigure' (or 'python garmin_mcp.py login') "
+            "to log in again."
         )
     return Garmin(
-        email=email,
-        password=password,
+        email=email or None,
+        password=password or None,
         prompt_mfa=(lambda: input("MFA code: ")) if allow_interactive_mfa else None,
     )
 
@@ -143,6 +152,13 @@ def _login_with_recovery(allow_interactive_mfa: bool) -> Any:
     except Exception as e:
         if type(e).__name__ not in _AUTH_ERROR_NAMES or not _token_cache_present():
             raise
+        if not os.environ.get("GARMIN_PASSWORD") and not allow_interactive_mfa:
+            # No password to fall back on: keep the cache (it may still be
+            # recoverable) and tell the user how to re-login instead.
+            raise RuntimeError(
+                "Garmin tokens were rejected and no GARMIN_PASSWORD is set. "
+                "Run 'install.bat -Reconfigure' to log in again."
+            ) from e
         log.warning(
             "Cached Garmin tokens rejected (%s); clearing cache and "
             "retrying a fresh login",
@@ -2450,8 +2466,8 @@ def _interactive_login() -> None:
         if cls_name in _AUTH_ERROR_NAMES:
             print("", file=sys.stderr)
             print("ERROR: Garmin rejected your credentials (401 Unauthorized).", file=sys.stderr)
-            print("       Edit the .env file with the correct email/password and re-run:", file=sys.stderr)
-            print("       python garmin_mcp.py login", file=sys.stderr)
+            print("       Check GARMIN_EMAIL in .env and re-run (you will be asked", file=sys.stderr)
+            print("       for the password):  install.bat -Reconfigure", file=sys.stderr)
             sys.exit(1)
         # For anything else, give the original message but skip the stack trace
         print("", file=sys.stderr)

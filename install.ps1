@@ -271,9 +271,12 @@ if ($needCreds) {
     # IMPORTANT: write UTF-8 WITHOUT BOM. PowerShell 5.1's Set-Content -Encoding utf8
     # always adds a BOM (EF BB BF), which python-dotenv reads as part of the first
     # key name (﻿GARMIN_EMAIL), causing GARMIN_EMAIL to look unset to Python.
-    $envContent = "GARMIN_EMAIL=$email`nGARMIN_PASSWORD=$password`n"
+    # Only the email goes into .env. The password is used once for the login
+    # below (via a process-only env var) and is never written to disk; after
+    # that the connector runs on the cached OAuth tokens.
+    $envContent = "GARMIN_EMAIL=$email`n"
     [System.IO.File]::WriteAllText($envFile, $envContent, [System.Text.UTF8Encoding]::new($false))
-    Write-Ok ".env written"
+    Write-Ok ".env written (email only - password is not stored)"
 } else {
     Write-Ok ".env already exists (use -Reconfigure to recreate)"
     $hasMfa = $false  # unknown, but if tokens already exist we don't need this
@@ -295,17 +298,25 @@ if ($SkipGarminLogin) {
         Write-Warn2 "the code ready. You'll be prompted below for 'MFA code:'"
         Write-Host ""
     }
+    if ($Reconfigure) {
+        # Force a real SSO login with the new credentials instead of
+        # silently reusing the old cached tokens.
+        Remove-Item (Join-Path $tokenDir "garmin_tokens.json") -Force -ErrorAction SilentlyContinue
+    }
     Push-Location $ProjectDir
     try {
+        if ($password) { $env:GARMIN_PASSWORD = $password }
         & $venvPython "garmin_mcp.py" login
         $loginExit = $LASTEXITCODE
     } finally {
+        Remove-Item Env:GARMIN_PASSWORD -ErrorAction SilentlyContinue
+        $password = $null
         Pop-Location
     }
-    if ((Test-Path $tokenDir) -and $loginExit -eq 0) {
+    if ((Test-Path (Join-Path $tokenDir "garmin_tokens.json")) -and $loginExit -eq 0) {
         Write-Ok "Login OK, tokens saved in $tokenDir"
     } else {
-        Write-Err2 "Login failed. Check credentials in .env and re-run: install.bat -Reconfigure"
+        Write-Err2 "Login failed. Check your email/password and re-run: install.bat -Reconfigure"
         exit 1
     }
 }

@@ -42,13 +42,13 @@ In short: if you don't open Claude Desktop, nothing is running.
    - Install Python 3.12 if missing (via winget)
    - Install Claude Desktop if missing (via winget)
    - Create the `.venv` virtualenv and install dependencies
-   - Ask for your **Garmin email and password** (stored only in the local `.env`, never sent anywhere else)
+   - Ask for your **Garmin email and password**. Only the email is saved (in the local `.env`); the password is used once for the login and is **never written to disk** (see [Password handling](#password-handling))
    - Ask whether **MFA (2FA)** is enabled: if yes, it warns you to have your authenticator app ready before triggering the login prompt
    - Run a one-time Garmin login (caches the OAuth token in `~/.garminconnect/`, auto-refreshed for months)
    - Detect whether you have Claude Desktop **Microsoft Store** or **classic** and write the config to the correct path (smart merge if you already have other MCP servers configured)
 4. Open Claude Desktop and try: *"How's my recovery today?"*
 
-To re-configure later (change password, re-login):
+To re-configure later (change password, re-login after the tokens expired — asks for email and password again):
 ```powershell
 .\install.bat -Reconfigure
 ```
@@ -135,16 +135,31 @@ Copy-Item .env.example .env
 notepad .env
 ```
 
-Replace the placeholder lines with your real Garmin Connect email and password:
+Replace the placeholder with your real Garmin Connect email:
 
 ```
 GARMIN_EMAIL=you@email.com
-GARMIN_PASSWORD=yourpassword
 ```
 
-Save and close notepad.
+Save and close notepad. You don't need to put your password in the file: the login in the next step asks for it.
 
-> Your credentials stay **on your machine**. The `.env` file is git-ignored. The library authenticates directly with `sso.garmin.com` and saves an OAuth token under `~/.garminconnect/` that auto-refreshes. The password is only needed for the first login.
+> Your credentials stay **on your machine**. The `.env` file is git-ignored. The library authenticates directly with `sso.garmin.com` and saves an OAuth token under `~/.garminconnect/` that auto-refreshes. The password is only needed for that first login.
+
+### Password handling
+
+The password is **optional** once you are logged in:
+
+| Situation | Password needed? |
+|---|---|
+| First install (`install.bat`) | Yes, once (plus the MFA code if enabled) |
+| Using Claude / the connector | No — runs on the cached tokens |
+| Re-running `install.bat` | No — existing `.env` and tokens are kept |
+| Tokens expired (after months) | Yes, once: `.\install.bat -Reconfigure` |
+
+- `install.bat` asks for the password with hidden input, passes it to the login only for that one process, and **does not store it**.
+- `python garmin_mcp.py login` asks for it in the terminal if `GARMIN_PASSWORD` is not set.
+- You *can* still set `GARMIN_PASSWORD=` in `.env` (older installs have it). Then the connector can re-login on its own when the tokens expire — at the cost of keeping the password in plain text. If you remove it, delete the line; nothing else changes.
+- If the tokens are rejected and no password is set, the connector keeps the token cache and tells you to run `.\install.bat -Reconfigure`.
 
 ### 6. One-time Garmin login
 
@@ -159,7 +174,7 @@ Garmin Connect login...
 OK. Tokens saved in C:\Users\<you>\.garminconnect
 ```
 
-If you have **MFA enabled** on your Garmin account, you'll be asked for the code here — only this once. From then on tokens refresh automatically and you won't need to log in again (typically for months).
+You'll be asked for your Garmin password (input is hidden). If you have **MFA enabled** on your Garmin account, you'll be asked for the code here too — only this once. From then on tokens refresh automatically and you won't need to log in again (typically for months).
 
 ### 7. (Optional but recommended) Verify the data flow
 
